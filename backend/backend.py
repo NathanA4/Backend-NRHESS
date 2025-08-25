@@ -16,18 +16,28 @@ import os
 app = Flask(__name__)
 bcrypt = Bcrypt(app)
 
-username = os.getenv("MYSQL_USER")
-password = os.getenv("MYSQL_PASSWORD")
-host = os.getenv("MYSQL_HOST")
-port = os.getenv("MYSQL_PORT")
-database = os.getenv("MYSQL_DATABASE")
+username = "root" 
+password = "1234" 
+database = "Airplane_System"
 
-app.config['SQLALCHEMY_DATABASE_URI'] = f"mysql+pymysql://{username}:{password}@{host}:{port}/{database}"
+app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://{username}:{password}@localhost:3000/{database}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+db.init_app(app) 
+CORS(app)
 
-db.init_app(app)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+#username = os.getenv("MYSQL_USER")
+#password = os.getenv("MYSQL_PASSWORD")
+#host = os.getenv("MYSQL_HOST")
+#port = os.getenv("MYSQL_PORT")
+#database = os.getenv("MYSQL_DATABASE")
+
+#app.config['SQLALCHEMY_DATABASE_URI'] = f"mysql+pymysql://{username}:{password}@{host}:{port}/{database}"
+#app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+
+#db.init_app(app)
+#CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 @app.route('/api/register', methods=['POST'])
 def register():
@@ -317,11 +327,12 @@ def run_simulation():
         discount_rate = 0.03
         projection_name = data.get('projection_name', '')
         projections_by_region = data.get('projections_by_region', {})
-        transmission_limit_by_year = data.get('transmission_limit', {})
+        transmission_limits_by_pair = data.get('transmission_limit', {})
         transmission_loss = data.get('transmission_loss', 0.05)
         use_custom_mix = data.get("use_custom_mix", False)
         custom_caps = data.get("custom_installed_capacities", {})
         transmission_recipients = data.get('transmission_recipients', {})
+        
 
 
 
@@ -435,7 +446,8 @@ def run_simulation():
                             'source_type': source_type,
                             'energy_generated': round(energy_generated, 2),
                             'engineering_energy': round(engineering_energy, 2),
-                            'percent': round(percent, 1)
+                            'percent': round(percent, 1),
+                            'annualized_cost': round(annualized_cost, 2)
                         })
 
                         energy_options[year_str][f"Option {option_index}"][source_type] = round(energy_generated, 2)
@@ -518,7 +530,10 @@ def run_simulation():
                         deficit = max(0, -region_balances[to_region].get(year, 0))
 
                         if deficit > 0:
-                            limit = transmission_limit_by_year.get(str(year), 100)
+                            pair_key = f"{from_region}-{to_region}"
+                            year_str = str(year)
+                            limit = transmission_limits_by_pair.get(pair_key, {}).get(year_str, 100)
+
                             sent = min(surplus, deficit, limit)
 
                             received = sent * (1 - transmission_loss)
@@ -571,45 +586,66 @@ def run_simulation():
 
 @app.route('/api/economic_analysis', methods=['POST'])
 def economic_analysis():
-    """
-    Payload expects:
-    {
-      "results": [...],               # array returned by /api/run_simulation ("results" field)
-      "years": [2025,2030,...]         # optional filter/order
-    }
-    """
     data = request.get_json() or {}
     results = data.get("results", [])
     years_filter = data.get("years")
 
-    # Aggregate generation & demand
+    # Economic parameters
+    electricity_price = 0.1  # $/kWh
+    increase_rate = 5        # % increase per year
+    discount_rate = 0.03     # HOMER-like real discount rate
+    base_year = 2025
+
     gen_by_year = defaultdict(float)
     demand_by_year = defaultdict(float)
-    seen_demand_keys = set()  # To avoid double counting
+    cost_by_year = defaultdict(float)
+    seen_demand_keys = set()
 
     for r in results:
         y = int(r["year"])
         gen_by_year[y] += float(r.get("energy_generated", 0))
 
-        d = float(r.get("demand", 0))
+        # Demand (some results use 'apple')
+        d = float(r.get("demand", r.get("apple", 0)))
         key = (y, r.get("option"), r.get("region"))
         if d > 0 and key not in seen_demand_keys:
             demand_by_year[y] += d
             seen_demand_keys.add(key)
 
-    # Decide year order
+        # Annualized cost from simulation results (capex+opex+fuel)
+        cost_by_year[y] += float(r.get("annualized_cost", 0))
+
     years = sorted(set(gen_by_year.keys()) | set(demand_by_year.keys()))
     if years_filter:
         years = [y for y in years if y in years_filter]
 
-    # Build yearly data
     generation_data = []
+    cash_flow_data = []
     total_gen = total_demand = total_surplus = 0
+    pv_cost_sum = 0
+    pv_gen_sum = 0
 
     for y in years:
-        g = round(gen_by_year.get(y, 0), 3)
+        g = round(gen_by_year.get(y, 0), 3)  # kWh/year
         d = round(demand_by_year.get(y, 0), 3)
-        s = round(g - d, 3)
+        s = round(d - g, 3)
+
+        # Price for year with escalation
+        price_for_year = electricity_price * ((1 + increase_rate / 100) ** (y - base_year))
+
+        # Revenue and cost
+        revenue = g * price_for_year
+        annual_cost = cost_by_year.get(y, 0)  # $/year
+
+        cash_flow = revenue - annual_cost
+
+        # Discount factor
+        years_since_start = y - base_year
+        discount_factor = (1 / ((1 + discount_rate) ** years_since_start))
+
+        # Present value sums
+        pv_cost_sum += annual_cost * discount_factor
+        pv_gen_sum += g * discount_factor
 
         total_gen += g
         total_demand += d
@@ -622,7 +658,12 @@ def economic_analysis():
             "generation": g
         })
 
-    # Add Total row like in Excel
+        cash_flow_data.append({
+            "year": y,
+            "cash_flow": round(cash_flow, 2)
+        })
+
+    # Add totals like HOMER's summary
     generation_data.append({
         "year": "Total",
         "demand": round(total_demand, 3),
@@ -630,15 +671,16 @@ def economic_analysis():
         "generation": round(total_gen, 3)
     })
 
-    # Placeholder cash flow
-    cash_flow_data = [{"year": y, "cash_flow": 0} for y in years if isinstance(y, int)]
+    # HOMER-style NPC (convert to million $)
+    npc = round(pv_cost_sum / 1_000_000, 3)
+    # LCOE = NPC / discounted generation
+    lcoe = round((pv_cost_sum / pv_gen_sum) if pv_gen_sum > 0 else 0, 5)
 
-    # Economic summary placeholders
     economic_summary = {
-        "electricity_price": 0.1,
-        "increasing_rate": 5,
-        "net_present_cost": 0,
-        "lcoe": 0.0
+        "electricity_price": electricity_price,
+        "increasing_rate": increase_rate,
+        "net_present_cost": npc,
+        "lcoe": lcoe
     }
 
     return jsonify({
@@ -648,7 +690,11 @@ def economic_analysis():
     })
 
 
-if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()  # Creates tables if they don't exist
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
+if __name__ == '__main__': 
+    app.run(debug=True)
+# 
+# if __name__ == "__main__":
+    #with app.app_context():
+        #db.create_all()  # Creates tables if they don't exist
+    #app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
