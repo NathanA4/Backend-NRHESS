@@ -16,28 +16,28 @@ import os
 app = Flask(__name__)
 bcrypt = Bcrypt(app)
 
-username = "root" 
-password = "1234" 
-database = "Airplane_System"
+#username = "root" 
+#password = "1234" 
+#database = "Airplane_System"
 
-app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://{username}:{password}@localhost:3000/{database}'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-db.init_app(app) 
-CORS(app)
-
-#username = os.getenv("MYSQL_USER")
-#password = os.getenv("MYSQL_PASSWORD")
-#host = os.getenv("MYSQL_HOST")
-#port = os.getenv("MYSQL_PORT")
-#database = os.getenv("MYSQL_DATABASE")
-
-#app.config['SQLALCHEMY_DATABASE_URI'] = f"mysql+pymysql://{username}:{password}@{host}:{port}/{database}"
+#app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://{username}:{password}@localhost:3000/{database}'
 #app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+#db.init_app(app) 
+#CORS(app)
 
-#db.init_app(app)
-#CORS(app, resources={r"/api/*": {"origins": "*"}})
+username = os.getenv("MYSQL_USER")
+password = os.getenv("MYSQL_PASSWORD")
+host = os.getenv("MYSQL_HOST")
+port = os.getenv("MYSQL_PORT")
+database = os.getenv("MYSQL_DATABASE")
+
+app.config['SQLALCHEMY_DATABASE_URI'] = f"mysql+pymysql://{username}:{password}@{host}:{port}/{database}"
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+
+db.init_app(app)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 @app.route('/api/register', methods=['POST'])
 def register():
@@ -691,10 +691,10 @@ def economic_analysis():
 
 
 
-if __name__ == '__main__': 
-    app.run(debug=True)
-# 
-# if __name__ == "__main__":
-    #with app.app_context():
-        #db.create_all()  # Creates tables if they don't exist
-    #app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+#if __name__ == '__main__': 
+    #app.run(debug=True)
+
+if __name__ == "__main__":
+    with app.app_context():
+        db.create_all()  # Creates tables if they don't exist
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
