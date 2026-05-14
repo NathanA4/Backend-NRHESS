@@ -2008,9 +2008,29 @@ def _run_simulation_core(data):
             installed_capacities[str(year_str)] = {"1": caps_float}
 
     # Fetch demand
-    demand_resp = requests.get(f"http://localhost:5000/api/user_energy_demand/{user_id}")
-    if demand_resp.status_code != 200:
-        raise Exception('Failed to fetch energy demand')
+    # demand_resp = requests.get(f"http://localhost:5000/api/user_energy_demand/{user_id}")
+    # if demand_resp.status_code != 200:
+    #     raise Exception('Failed to fetch energy demand')
+    projections = EnergyDemandProjection.query.filter_by(user_id=user_id).all()
+
+    all_demand_data = []
+    for p in projections:
+        growth_data = json.loads(p.growth_rate)
+        power_data = growth_data.get("power", growth_data)
+
+        energy_data = {
+            year: round(float(value) * 8760)
+            for year, value in power_data.items()
+        }
+
+        all_demand_data.append({
+            "id": p.id,
+            "name": p.name,
+            "base_demand": p.base_demand,
+            "demand_per_year": growth_data,
+            "energy": energy_data,
+            "user_id": p.user_id
+        })
 
     all_demand_data = demand_resp.json()
 
@@ -2775,5 +2795,5 @@ def _compute_economic_dataset(rows, years, electricity_price, increase_rate, dis
 
 if __name__ == "__main__":
     with app.app_context():
-        db.create_all()  
+        db.create_all()  # Creates tables if they don't exist
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
