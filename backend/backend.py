@@ -24,7 +24,6 @@ from model import (
 # APP / DATABASE CONFIGURATION
 # ============================================================
 
-load_dotenv()
 
 app = Flask(__name__)
 
